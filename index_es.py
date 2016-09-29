@@ -18,9 +18,9 @@ config = {
             "analyzer": {
                 "my_analyzer": {
                     "type": "pattern",
-                    "pattern": "   ",
+                    "pattern": " ",
                     "lowercase": False,
-                    "stopwords": STOPWORDS  # make sure it's a list, not a set
+                    "stopwords": STOPWORDS
                 }
             }
         }
@@ -39,20 +39,23 @@ config = {
 }
 res = es.indices.create(index='github', body=json.dumps(config))
 print("response: '%s'" % res)
-#print("putting a mapping into '%s' index..." % 'github')
-#res = es.indices.put_mapping(index='github', doc_type='repos',
-#    body=)
-#print("response: '%s'" % res)
 
-with open('python_repos.csv', 'r') as f:
+with open('python_repos2.csv', 'r') as f:
     bulk_data = []
     reader = csv.reader(f, delimiter=',')
     for _id, row in enumerate(islice(reader, 1, None)):
-        user, repo_name, num_bytes = row
+        user, repo_name, num_bytes, stars, fork = row
+        # invert fork to enable custom query scoring
+        fork = 1 if fork == 0 else 0
         # es.index(index='github', doc_type='repos', id=_id, body={
         #     'user': user, 'repo_name': repo_name
         # })
-        data_dict = {'user': user, 'repo_name': repo_name}
+        data_dict = {
+            'user': user,
+            'repo_name': repo_name,
+            'stars': stars,
+            'fork': fork
+        }
         op_dict = {
             'index': {
                 '_index': 'github',
