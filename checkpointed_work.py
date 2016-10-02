@@ -13,7 +13,7 @@ from pyspark import SparkContext, SparkConf, StorageLevel
 from pyspark.sql import *
 from elasticsearch import Elasticsearch
 from riak import RiakClient
-import config as cfg
+import python_config as cfg
 
 ###############################################################################
 # Setup context
@@ -151,19 +151,6 @@ def match_repos(tups):
     es = Elasticsearch([{'host' : cfg.ES_IP, 'port': cfg.ES_PORT}],
         timeout=3600, filter_path=['hits.hits._*'])
     # TODO: refactor query's schema in case future index/query structure changes
-    # query = {
-    #     "query" : {
-    #         "constant_score" : { 
-    #             "filter" : {
-    #                 "term" : { 
-    #                     "repo_name" : None
-    #                 }
-    #             }
-    #         }
-    #     },
-    #     "from": 0,
-    #     "size": 1
-    # }
     query = {
         "query" : {
             "function_score": {
@@ -200,15 +187,13 @@ def match_repos(tups):
         # Build the mini-batch to be sent to es.msearch
         for tup in mb:
             dep = tup[1]
-            #query['query']['constant_score']['filter']['term'] \
-            #    ['repo_name'] = dep
             query['query']['function_score']['query']['constant_score'] \
                 ['filter']['term']['repo_name'] = dep
             body_elems.append('{}')
             body_elems.append(json.dumps(query))
         body = '\n'.join(body_elems)
         response_obj = es.msearch(body=body, index=['github'],
-            doc_type=['repos'])
+            doc_type=[cfg.LANGUAGE])
         responses = response_obj['responses']
         for tup, response in zip(mb, responses):
             hits = response['hits']['hits']
@@ -258,17 +243,17 @@ for tup in islice(top_K_repos, 0, 10):
 # Send graph edges to Riak
 ###############################################################################
 # Send the rest of the repo adjacency lists to Riak
-def write_adj_graph_to_riak(tups):
+def write_neighbors_to_riak(tups):
     clients = [RiakClient(host=ip, protocol='pbc',
-                               pb_port=cfg.RIAK_PORT)
-                    for ip in cfg.RIAK_IPS]
-    buckets = [riak_client.bucket('adj_graph')
+                          pb_port=cfg.RIAK_PORT)
+               for ip in cfg.RIAK_IPS]
+    buckets = [riak_client.bucket('%s/neighbors' % cfg.LANGUAGE)
         for riak_client in clients]
     for tup, riak_bucket in zip(tups, cycle(buckets)):
         repo, adj_repos, _ = tup
         _ = riak_bucket.new(repo, adj_repos).store()
 
-rdd_repo_graph.foreachPartition(write_adj_graph_to_riak)
+rdd_repo_graph.foreachPartition(write_neighbors_to_riak)
 
 ###############################################################################
 # Build the floral structure and send to Riak
@@ -286,30 +271,32 @@ def write_flower_to_riak(repos):
     """
     clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
         for ip in cfg.RIAK_IPS]
-    adj_graphs = [client.bucket('adj_graph') for client in clients]
-    flowers = [client.bucket('flower') for client in clients]
+    neighborss = [client.bucket('%s/neighbors' % cfg.LANGUAGE) \
+        for client in clients]
+    flowers = [client.bucket('%s/flowers' % cfg.LANGUAGE) \
+        for client in clients]
 
-    M = cfg.M
     N = cfg.N
 
-    for repo0, adj_graph, flower in zip(repos,
-                                        cycle(adj_graphs),
-                                        cycle(flowers)):
+    for repo0, neighbor, flower in zip(repos,
+                                       cycle(neighborss),
+                                       cycle(flowers)):
         repo_set = set()
         nodes = []
         links = []
-        repos1 = adj_graph.get(repo0).data
+        repos1 = neighbor.get(repo0).data
+        repos1 = repos1 if repos1 is not None else []
         degree0 = len(repos1)
         if repo0 not in repo_set:
-            repo_set.append(repo0)
+            repo_set.add(repo0)
             nodes.append([repo0, degree0])
 
-        # Take up to M
+        # Take up to N
         for i in range(len(repos1)):
-            repos2 = adj_graph.get(repos1[i]).data
+            repos2 = neighbor.get(repos1[i]).data
             repos2 = repos2 if repos2 is not None else []
             repos1[i] = [repos1[i], len(repos2)]
-        top_repos1 = heapq.nlargest(M, repos1, lambda tup: tup[1])
+        top_repos1 = heapq.nlargest(N, repos1, lambda tup: tup[1])
 
         # 1st order
         for x in top_repos1:
@@ -320,10 +307,10 @@ def write_flower_to_riak(repos):
             links.append([repo0, repo1])
 
             # Take up to N
-            repos2 = bucket.get(repo1).data
+            repos2 = neighbor.get(repo1).data
             repos2 = repos2 if repos2 is not None else []
             for j in range(len(repos2)):
-                repos3 = bucket.get(repos2[j]).data
+                repos3 = neighbor.get(repos2[j]).data
                 repos3 = repos3 if repos3 is not None else []
                 repos2[j] = [repos2[j], len(repos3)]
             top_repos2 = heapq.nlargest(N, repos2, lambda tup: tup[1])
@@ -336,7 +323,7 @@ def write_flower_to_riak(repos):
                     nodes.append([repo2, degree2])
                 links.append([repo1, repo2])
 
-    flower.new(repo0, [nodes, links]).store()
+        flower.new(repo0, [nodes, links]).store()
 
 # (dst_repo)
 rdd_repo = rdd_repo_graph.map(lambda tup: tup[0])
@@ -345,11 +332,12 @@ rdd_repo.foreachPartition(write_flower_to_riak)
 def cache_top_K():
     clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
         for ip in cfg.RIAK_IPS]
-    flowers = [client.bucket('flower') for client in clients]
-    top_flowers = [client.bucket('top_flower') for client in clients]
+    flowers = [client.bucket('%s/flowers' % cfg.LANGUAGE) \
+        for client in clients]
+    top_flowers = [client.bucket('%s/top_flowers' % cfg.LANGUAGE) \
+        for client in clients]
 
-
-    for k, tup, flower, top_flower in zip(range(K),
+    for k, tup, flower, top_flower in zip(range(cfg.K),
                                           top_K_repos,
                                           cycle(flowers),
                                           cycle(top_flowers)):

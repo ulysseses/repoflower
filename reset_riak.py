@@ -1,5 +1,8 @@
 from riak import RiakClient
-import config as cfg
+import python_config as cfg
+
+prefixes = ['python']
+suffixes = ['neighbors', 'flowers', 'top_flowers']
 
 client = RiakClient(host=cfg.RIAK_IPS[0], pb_port=cfg.RIAK_PORT,
 	protocol='pbc')

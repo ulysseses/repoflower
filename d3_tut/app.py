@@ -6,12 +6,12 @@ app = Flask(__name__)
 
 @app.route('/')
 def hello():
-    return render_template('index2.html')
+    return render_template('index.html')
 
 @app.route('/repos/<user>/<repo_name>')
 def get_flower(user, repo_name):
     client = RiakClient(host="172.31.1.229", pb_port=8087, protocol="pbc")
-    bucket = client.bucket("flower")
+    bucket = client.bucket("python/flowers")
 
     repo = "%s/%s" % (user, repo_name)
     graph = bucket.get(repo).data
@@ -29,4 +29,4 @@ def get_flower(user, repo_name):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=80)
