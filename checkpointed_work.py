@@ -1,6 +1,13 @@
+'''
+spark-submit --master spark://172.31.1.231:7077 --driver-memory 13g \
+    --executor-memory 13g --packages com.databricks:spark-avro_2.10:2.0.1 \
+    --py-files pyfiles.zip checkpointed_work.py
+'''
+
 from __future__ import print_function
 import re
 import json
+import heapq
 from itertools import islice, cycle
 from pyspark import SparkContext, SparkConf, StorageLevel
 from pyspark.sql import *
@@ -15,7 +22,7 @@ conf = SparkConf() \
     .setMaster("spark://%s:%d" %
         (cfg.SPARK_IP, cfg.SPARK_PORT)) \
     .setAppName(cfg.SPARK_APP_NAME)
-sc = SparkContext(conf)
+sc = SparkContext(conf=conf)
 sc_sql = SQLContext(sc)
 
 ###############################################################################
@@ -235,6 +242,9 @@ rdd_query_output = rdd_query_input.mapPartitions(match_repos)
 # (dst_repo, src_repos, len(src_repos))
 rdd_repo_graph = rdd_query_output.aggregateByKey([], seqOp3, combOp3) \
     .map(lambda tup: (tup[0], tup[1], len(tup[1])))
+tmp1.unpersist()
+rdd_repo_graph.persist(StorageLevel.DISK_ONLY)
+
 top_K_repos = rdd_repo_graph.top(cfg.K, key=lambda tup: tup[-1])
 
 # Briefly visualize the top 10 repos
@@ -244,30 +254,108 @@ for tup in islice(top_K_repos, 0, 10):
     for src_repo in islice(src_repos, 0, 10):
         print("  %s" % src_repo)
 
-# Send the top K repos to Riak round-robin
-riak_clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
-    for ip in cfg.RIAK_IPS]
-riak_buckets_top = [riak_client.bucket('top_repo_adj_graph')
-    for riak_client in riak_clients]
-riak_buckets_top[0].new('K', cfg.K).store()
-
-for k, tup, riak_bucket in zip(range(len(top_K_repos)),
-                               top_K_repos,
-                               cycle(riak_buckets_top)):
-    _ = riak_bucket.new('%d' % k, [tup[0], tup[1]]).store()
-
 ###############################################################################
 # Send graph edges to Riak
 ###############################################################################
 # Send the rest of the repo adjacency lists to Riak
-def write_to_riak(tups):
-    riak_clients = [RiakClient(host=ip, protocol='pbc',
+def write_adj_graph_to_riak(tups):
+    clients = [RiakClient(host=ip, protocol='pbc',
                                pb_port=cfg.RIAK_PORT)
                     for ip in cfg.RIAK_IPS]
-    riak_buckets = [riak_client.bucket('repo_adj_graph')
-        for riak_client in riak_clients]
-    for tup, riak_bucket in zip(tups, cycle(riak_buckets)):
+    buckets = [riak_client.bucket('adj_graph')
+        for riak_client in clients]
+    for tup, riak_bucket in zip(tups, cycle(buckets)):
         repo, adj_repos, _ = tup
         _ = riak_bucket.new(repo, adj_repos).store()
 
-rdd_repo_graph.foreachPartition(write_to_riak)
+rdd_repo_graph.foreachPartition(write_adj_graph_to_riak)
+
+###############################################################################
+# Build the floral structure and send to Riak
+###############################################################################
+def write_flower_to_riak(repos):
+    """
+    We could optimize this function via memoization. If part of a flower
+    already exists on the Riak cluster, then we just re-use that instead of
+    calculating it again. However, in the worst-case scenario, since Riak isn't
+    in strong consistency mode by default, we have no guarantee that the
+    memoized view is up-to-date.
+
+    Riak does have a strong consistency mode, but at the moment it isn't ready
+    for production.
+    """
+    clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
+        for ip in cfg.RIAK_IPS]
+    adj_graphs = [client.bucket('adj_graph') for client in clients]
+    flowers = [client.bucket('flower') for client in clients]
+
+    M = cfg.M
+    N = cfg.N
+
+    for repo0, adj_graph, flower in zip(repos,
+                                        cycle(adj_graphs),
+                                        cycle(flowers)):
+        repo_set = set()
+        nodes = []
+        links = []
+        repos1 = adj_graph.get(repo0).data
+        degree0 = len(repos1)
+        if repo0 not in repo_set:
+            repo_set.append(repo0)
+            nodes.append([repo0, degree0])
+
+        # Take up to M
+        for i in range(len(repos1)):
+            repos2 = adj_graph.get(repos1[i]).data
+            repos2 = repos2 if repos2 is not None else []
+            repos1[i] = [repos1[i], len(repos2)]
+        top_repos1 = heapq.nlargest(M, repos1, lambda tup: tup[1])
+
+        # 1st order
+        for x in top_repos1:
+            repo1, degree1 = x
+            if repo1 not in repo_set:
+                repo_set.add(repo1)
+                nodes.append([repo1, degree1])
+            links.append([repo0, repo1])
+
+            # Take up to N
+            repos2 = bucket.get(repo1).data
+            repos2 = repos2 if repos2 is not None else []
+            for j in range(len(repos2)):
+                repos3 = bucket.get(repos2[j]).data
+                repos3 = repos3 if repos3 is not None else []
+                repos2[j] = [repos2[j], len(repos3)]
+            top_repos2 = heapq.nlargest(N, repos2, lambda tup: tup[1])
+
+            # 2nd order
+            for y in top_repos2:
+                repo2, degree2 = y
+                if repo2 not in repo_set:
+                    repo_set.add(repo2)
+                    nodes.append([repo2, degree2])
+                links.append([repo1, repo2])
+
+    flower.new(repo0, [nodes, links]).store()
+
+# (dst_repo)
+rdd_repo = rdd_repo_graph.map(lambda tup: tup[0])
+rdd_repo.foreachPartition(write_flower_to_riak)
+
+def cache_top_K():
+    clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
+        for ip in cfg.RIAK_IPS]
+    flowers = [client.bucket('flower') for client in clients]
+    top_flowers = [client.bucket('top_flower') for client in clients]
+
+
+    for k, tup, flower, top_flower in zip(range(K),
+                                          top_K_repos,
+                                          cycle(flowers),
+                                          cycle(top_flowers)):
+        dst_repo = tup[0]
+        top_flower.new('%d' % k, flower.get(dst_repo).data).store()
+
+    top_flowers[0].new('%d' % cfg.K, cfg.K).store()
+
+cache_top_K()

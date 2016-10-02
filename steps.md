@@ -25,7 +25,7 @@ FROM [bigquery-public-data:github_repos.languages]
 WHERE language.name = 'Go'
 ```
 
-## Extract GitHub dependencies
+## Extract dependencies
 
 * Split content by line
 * left of line should be "import "
@@ -128,4 +128,10 @@ print(extract_deps(snippet2))
 print()
 print(snippet3)
 print(extract_deps(snippet3))
+```
+
+## Filter for GitHub dependencies
+
+```Python
+
 ```
