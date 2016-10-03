@@ -1,11 +1,14 @@
-import requests
+'''
+Reset the Elasticsearch cluster.
+'''
 from elasticsearch import Elasticsearch
 import json
-import csv
-from itertools import islice
-from stopwords import STOPWORDS
+from ..redis import RedisConfig
 
-es = Elasticsearch([{'host': 'localhost', 'port': 9200}], timeout=120)
+cfg = RedisConfig()
+
+es = Elasticsearch([{'host': cfg.ES_IP, 'port': cfg.ES_PORT}], timeout=120)
+
 if es.indices.exists('github'):
     print("deleting '%s' index..." % 'github')
     res = es.indices.delete(index='github')
@@ -20,7 +23,7 @@ config = {
                     "type": "pattern",
                     "pattern": " ",
                     "lowercase": False,
-                    "stopwords": STOPWORDS
+                    "stopwords": cfg.STOPWORDS.split(',')
                 }
             }
         }
@@ -30,8 +33,7 @@ config = {
             "properties": {
                 "repo_name": {
                     "type": "string",
-                    #"index": "not_analyzed"
-                    "analyzer": "my_analyzer"
+                    "index": "not_analyzed"
                 }
             }
         },
@@ -39,7 +41,6 @@ config = {
             "properties": {
                 "repo_name": {
                     "type": "string",
-                    #"index": "not_analyzed"
                     "analyzer": "my_analyzer"
                 }
             }

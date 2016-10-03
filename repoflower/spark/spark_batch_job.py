@@ -1,9 +1,10 @@
 '''
 spark-submit --master spark://172.31.1.231:7077 --driver-memory 13g \
     --executor-memory 13g --packages com.databricks:spark-avro_2.10:2.0.1 \
-    --py-files pyfiles.zip checkpointed_work.py
-'''
+    --py-files pyfiles.zip spark_batch_job.py <language>
 
+Usage: spark_batch_job.py <language>
+'''
 from __future__ import print_function
 import re
 import json
@@ -13,7 +14,20 @@ from pyspark import SparkContext, SparkConf, StorageLevel
 from pyspark.sql import *
 from elasticsearch import Elasticsearch
 from riak import RiakClient
-import python_config as cfg
+from docopt import docopt
+from ..redis import RedisConfig
+
+cfg = RedisConfig()
+
+ARGUMENTS = docopt(__doc__)
+LANGUAGE = ARGUMENTS['<language>'].lower()
+
+if LANGUAGE == 'python':
+	from . import extract_deps_python as extract_deps
+elif LANGUAGE == 'go':
+	from . import extract_deps_go as extract_deps
+else:
+	raise Exception("language isn't supported")
 
 ###############################################################################
 # Setup context
@@ -34,7 +48,7 @@ df_contents = sc_sql.read.format("com.databricks.spark.avro").load(
     (cfg.AWS_ACCESS_KEY_ID,
      cfg.AWS_SECRET_ACCESS_KEY,
      cfg.S3_BUCKET,
-     cfg.S3_CONTENTS_FILE_BLOB))
+     cfg.S3_CONTENTS_FILE_BLOB % (LANGUAGE, LANGUAGE)))
 df_contents.registerTempTable("contents")
 
 # Load files table
@@ -43,29 +57,12 @@ df_files = sc_sql.read.format("com.databricks.spark.avro").load(
     (cfg.AWS_ACCESS_KEY_ID,
      cfg.AWS_SECRET_ACCESS_KEY,
      cfg.S3_BUCKET,
-     cfg.S3_FILES_FILE_BLOB))
+     cfg.S3_FILES_FILE_BLOB % (LANGUAGE, LANGUAGE)))
 df_files.registerTempTable("files")
 
 # Extract names of dependencies
-def extract_dependency(tup):
-    _id, line = tup
-    prog = re.compile("""^(?:import|from)[\t ]+([^\. ]+)""")
-    obj = prog.match(line)
-    if obj:
-        return (_id, obj.group(1))
-    return (_id, obj)
-
-rdd_contents = sc_sql.sql("""
-    SELECT id, SPLIT(content, '\\n') as lines
-    FROM contents
-    """) \
-    .flatMap(lambda row: \
-        [(row.id, line) for line in row.lines] if row.lines else []) \
-    .map(extract_dependency) \
-    .filter(lambda tup: True if tup[1] else False)
-
 # (id, dep)
-df_contents = sc_sql.createDataFrame(rdd_contents, ['id', 'dep'])
+df_contents = extract_deps.extract_deps(sc_sql)
 
 # (id, dep_repo, path)
 df_files = sc_sql.sql("""
@@ -192,8 +189,8 @@ def match_repos(tups):
             body_elems.append('{}')
             body_elems.append(json.dumps(query))
         body = '\n'.join(body_elems)
-        response_obj = es.msearch(body=body, index=['github'],
-            doc_type=[cfg.LANGUAGE])
+        response_obj = es.msearch(body=body, index='github',
+            doc_type=LANGUAGE)
         responses = response_obj['responses']
         for tup, response in zip(mb, responses):
             hits = response['hits']['hits']
@@ -246,8 +243,8 @@ for tup in islice(top_K_repos, 0, 10):
 def write_neighbors_to_riak(tups):
     clients = [RiakClient(host=ip, protocol='pbc',
                           pb_port=cfg.RIAK_PORT)
-               for ip in cfg.RIAK_IPS]
-    buckets = [riak_client.bucket('%s/neighbors' % cfg.LANGUAGE)
+               for ip in cfg.RIAK_IPS.split(',')]
+    buckets = [riak_client.bucket('%s/neighbors' % LANGUAGE)
         for riak_client in clients]
     for tup, riak_bucket in zip(tups, cycle(buckets)):
         repo, adj_repos, _ = tup
@@ -270,10 +267,10 @@ def write_flower_to_riak(repos):
     for production.
     """
     clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
-        for ip in cfg.RIAK_IPS]
-    neighborss = [client.bucket('%s/neighbors' % cfg.LANGUAGE) \
+        for ip in cfg.RIAK_IPS.split(',')]
+    neighborss = [client.bucket('%s/neighbors' % LANGUAGE) \
         for client in clients]
-    flowers = [client.bucket('%s/flowers' % cfg.LANGUAGE) \
+    flowers = [client.bucket('%s/flowers' % LANGUAGE) \
         for client in clients]
 
     N = cfg.N
@@ -331,10 +328,10 @@ rdd_repo.foreachPartition(write_flower_to_riak)
 
 def cache_top_K():
     clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
-        for ip in cfg.RIAK_IPS]
-    flowers = [client.bucket('%s/flowers' % cfg.LANGUAGE) \
+        for ip in cfg.RIAK_IPS.split(',')]
+    flowers = [client.bucket('%s/flowers' % LANGUAGE) \
         for client in clients]
-    top_flowers = [client.bucket('%s/top_flowers' % cfg.LANGUAGE) \
+    top_flowers = [client.bucket('%s/top_flowers' % LANGUAGE) \
         for client in clients]
 
     for k, tup, flower, top_flower in zip(range(cfg.K),
@@ -344,6 +341,6 @@ def cache_top_K():
         dst_repo = tup[0]
         top_flower.new('%d' % k, flower.get(dst_repo).data).store()
 
-    top_flowers[0].new('%d' % cfg.K, cfg.K).store()
+    top_flowers[0].new('K', cfg.K).store()
 
 cache_top_K()

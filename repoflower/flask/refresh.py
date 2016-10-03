@@ -1,12 +1,23 @@
+'''
+Usage: refresh.py <language>
+'''
 from __future__ import print_function
 import heapq
 import json
 from riak import RiakClient
 from flask import Flask, jsonify
+from ..redis import RedisConfig
+from docopt import docopt
+
+arguments = docopt(__doc__)
+language = arguments['<language>']
+
+cfg = RedisConfig()
 
 # single threaded blocking... for now
-client = RiakClient(host="172.31.1.229", pb_port=8087, protocol="pbc")
-bucket = client.bucket("python/top_flowers")
+client = RiakClient(host=cfg.RIAK_IPS.split(',')[0],
+    pb_port=cfg.RIAK_PORT, protocol="pbc")
+bucket = client.bucket("%s/top_flowers" % language)
 
 node_set = set()
 link_set = set()
@@ -19,8 +30,6 @@ def keygen():
             yield key
 
 for k in keygen():
-    # out = bucket.get(k).data
-    # print('k: %s, out: %s' % (k, out))
     nodes, links = bucket.get(k).data
     nodes = [tuple(lst) for lst in nodes]
     links = [tuple(lst) for lst in links]
@@ -35,7 +44,7 @@ nodes = [{"id": repo, "group": degree} for (repo, degree) in nodes]
 links = [{"source": src_repo, "target": dst_repo} for \
     (src_repo, dst_repo) in links]
 
-with open('static/python_topK.json', 'w') as f:
+with open('static/%s_topK.json' % language, 'w') as f:
     app = Flask(__name__)
     with app.test_request_context():
         raw = jsonify({"nodes": nodes, "links": links}).data

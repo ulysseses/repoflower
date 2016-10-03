@@ -119,7 +119,7 @@ $("#search-text").keyup(function (e) {
       var user = tmp[0];
       var repo_name = tmp[1];
       if (user != "" && repo_name != "") {
-        $.get(encodeURI("/repos/" + user + "/" + repo_name),
+        $.get(encodeURI("/python/" + user + "/" + repo_name),
           function(data, status) {
             if (status == "success") {
               graph = data;

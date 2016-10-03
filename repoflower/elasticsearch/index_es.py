@@ -1,24 +1,28 @@
-"""
-Usage: index_go_es.py <filename>
-"""
+'''
+Usage: index_es.py <language> <filename>
+'''
 from docopt import docopt
-import requests
 from elasticsearch import Elasticsearch
-import json
 import csv
 from itertools import islice
-from stopwords import STOPWORDS
+from ..redis import RedisConfig
+
+cfg = RedisConfig()
 
 arguments = docopt(__doc__)
+language = arguments['<language>'].lower()
 filename = arguments['<filename>']
 
-es = Elasticsearch([{'host': 'localhost', 'port': 9200}], timeout=120)
+if language not in {'python', 'go'}:
+    raise Exception("only python and go are currently accepted")
+
+es = Elasticsearch([{'host': cfg.ES_IP, 'port': cfg.ES_PORT}], timeout=120)
 
 with open(filename, 'r') as f:
     bulk_data = []
     reader = csv.reader(f, delimiter=',')
     for _id, row in enumerate(islice(reader, 1, None)):
-        user, repo_name, num_bytes = row
+        user, repo_name, num_bytes = row[:3]
         data_dict = {
             'user': user,
             'repo_name': repo_name
@@ -26,10 +30,18 @@ with open(filename, 'r') as f:
         op_dict = {
             'index': {
                 '_index': 'github',
-                '_type': 'go',
+                '_type': language,
                 '_id': _id
             }
         }
+        if language == 'python':
+            stars, fork = row[3:]
+            stars = int(stars)
+            fork = int(fork)
+            # invert fork to enable custom query scoring
+            fork = 1 if fork == 0 else 0
+            data_dict['stars'] = stars
+            data_dict['fork'] = fork
         bulk_data.append(op_dict)
         bulk_data.append(data_dict)
 
@@ -38,4 +50,4 @@ res = es.bulk(index='github', body=bulk_data, refresh=False)
 es.indices.flush(index='github')
 
 print("es.count():")
-print(es.count(index="github", doc_type="go"))
+print(es.count(index="github", doc_type=language))
