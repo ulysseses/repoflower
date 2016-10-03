@@ -1,4 +1,4 @@
-*config.py
+shared_config.py
 *.csv
 interactive.py
 *.txt
