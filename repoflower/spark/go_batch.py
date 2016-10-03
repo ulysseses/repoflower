@@ -1,7 +1,7 @@
 '''
 spark-submit --master spark://172.31.1.231:7077 --driver-memory 13g \
     --executor-memory 13g --packages com.databricks:spark-avro_2.10:2.0.1 \
-    --py-files pyfiles.zip go_batch.py
+    go_batch.py
 '''
 from __future__ import print_function
 import re
@@ -12,7 +12,6 @@ from pyspark import SparkContext, SparkConf, StorageLevel
 from pyspark.sql import *
 from elasticsearch import Elasticsearch
 from riak import RiakClient
-from docopt import docopt
 import sys
 sys.path.insert(0, '../redis')
 from RedisConfig import RedisConfig
@@ -20,12 +19,16 @@ from RedisConfig import RedisConfig
 cfg = RedisConfig()
 
 LANGUAGE = "go"
+RIAK_IPS = cfg.RIAK_IPS.split(',')
+RIAK_PORT = int(cfg.RIAK_PORT)
+K = int(cfg.K)
+N = int(cfg.N)
 
 ###############################################################################
 # Setup context
 ###############################################################################
 conf = SparkConf() \
-    .setMaster("spark://%s:%d" %
+    .setMaster("spark://%s:%s" %
         (cfg.SPARK_IP, cfg.SPARK_PORT)) \
     .setAppName(cfg.SPARK_APP_NAME)
 sc = SparkContext(conf=conf)
@@ -53,21 +56,20 @@ df_files = sc_sql.read.format("com.databricks.spark.avro").load(
 df_files.registerTempTable("files")
 
 # Extract names of dependencies
-def helper(row):
+def helper(tup):
     """
     Go over each line of the content (source file) and extract all
     dependencies. We're going to perform a shortcut: instead of querying
     Elasticsearch, let's check if the imported package/module starts with
     "github.com/".
     """
-    _id, content = row.id, row.content
+    _id, content = tup
     # Split the content by carriage return and newline, then flatten
     a = [x.split('\n') for x in content.split('\r')]
     b = []
     for lst in a:
         b.extend(lst)
     c = [x for x in b if x != '']
-
     # Try to find all imports
     try:
         d = []
@@ -92,7 +94,6 @@ def helper(row):
                         d.append(s)
                     break
             counter += 1
-
         if not single_flag:
             for i in range(counter, len(c)):
                 line = c[i].split('//')[0].rstrip()
@@ -103,16 +104,15 @@ def helper(row):
                         d.append(line[:-1])
                     break
                 d.append(line)
-
         prog3 = re.compile(r'.*\"(.*)\".*')
         e = [prog3.search(x) for x in d]
         f = [x.group(1) for x in e if x is not None]
-
-        deps = [(_id, x) for x in f]
+        f = ['/'.join(gh_dep[11:].split('/')[:2])
+             for gh_dep in f if dep[:11] == 'github.com/']
+        f = [x for x in f if x != '']
     except:
-        deps = []
-
-    deps = [tup for tup in deps if tup[1][:11] == 'github.com/']
+        f = []
+    deps = (_id, f)
     # (id, deps)
     return deps
 
@@ -120,7 +120,10 @@ rdd_deps = sc_sql.sql("""
     SELECT id, content
     FROM contents
     """) \
-    .map(helper)
+    .rdd \
+    .filter(lambda tup: tup[1] is not None) \
+    .map(helper) \
+    .filter(lambda tup: len(tup[1]) != 0)
 
 # (id, deps)
 df_deps = sc_sql.createDataFrame(rdd_deps, ['id', 'deps'])
@@ -131,10 +134,16 @@ df_files = sc_sql.sql("""
     FROM files
     """)
 
+def reversal(row):
+    if row.deps is None:
+        return []
+    return [(dep, row.repo) for dep in row.deps]
+
 # (deps, repo) -> (dep, repo)
 rdd_matches = df_files.join(df_deps, on='id', how='outer') \
     .select('deps', 'repo') \
-    .flatMap(lambda row: [(dep, row.repo) for dep in row.deps])
+    .flatMap(reversal)
+    #.flatMap(lambda row: [(dep, row.repo) for dep in row.deps])
 
 ###############################################################################
 # Reverse schema
@@ -158,8 +167,8 @@ rdd_neighbors = rdd_matches.aggregateByKey(set(), seqOp, combOp) \
 ###############################################################################
 def write_neighbors_to_riak(tups):
     clients = [RiakClient(host=ip, protocol='pbc',
-                          pb_port=cfg.RIAK_PORT)
-               for ip in cfg.RIAK_IPS.split(',')]
+                          pb_port=RIAK_PORT)
+               for ip in RIAK_IPS]
     buckets = [client.bucket('%s/neighbors' % LANGUAGE)
         for client in clients]
     for tup, bucket in zip(tups, cycle(buckets)):
@@ -179,15 +188,12 @@ def write_flower_to_riak(repos):
     Riak does have a strong consistency mode, but at the moment it isn't ready
     for production.
     """
-    clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
-        for ip in cfg.RIAK_IPS]
+    clients = [RiakClient(host=ip, protocol='pbc', pb_port=RIAK_PORT)
+        for ip in RIAK_IPS]
     neighborss = [client.bucket('%s/neighbors' % LANGUAGE) \
         for client in clients]
     flowers = [client.bucket('%s/flowers' % LANGUAGE) \
         for client in clients]
-
-    N = cfg.N
-
     for repo0, neighbor, flower in zip(repos,
                                        cycle(neighborss),
                                        cycle(flowers)):
@@ -200,14 +206,12 @@ def write_flower_to_riak(repos):
         if repo0 not in repo_set:
             repo_set.add(repo0)
             nodes.append([repo0, degree0])
-
         # Take up to N
         for i in range(len(repos1)):
             repos2 = neighbor.get(repos1[i]).data
             repos2 = repos2 if repos2 is not None else []
             repos1[i] = [repos1[i], len(repos2)]
         top_repos1 = heapq.nlargest(N, repos1, lambda tup: tup[1])
-
         # 1st order
         for x in top_repos1:
             repo1, degree1 = x
@@ -215,7 +219,6 @@ def write_flower_to_riak(repos):
                 repo_set.add(repo1)
                 nodes.append([repo1, degree1])
             links.append([repo0, repo1])
-
             # Take up to N
             repos2 = neighbor.get(repo1).data
             repos2 = repos2 if repos2 is not None else []
@@ -224,7 +227,6 @@ def write_flower_to_riak(repos):
                 repos3 = repos3 if repos3 is not None else []
                 repos2[j] = [repos2[j], len(repos3)]
             top_repos2 = heapq.nlargest(N, repos2, lambda tup: tup[1])
-
             # 2nd order
             for y in top_repos2:
                 repo2, degree2 = y
@@ -232,28 +234,27 @@ def write_flower_to_riak(repos):
                     repo_set.add(repo2)
                     nodes.append([repo2, degree2])
                 links.append([repo1, repo2])
-
         flower.new(repo0, [nodes, links]).store()
 
+top_K_repos = rdd_neighbors.top(K, key=lambda tup: len(tup[1]))
+
 # (dst_repo)
-rdd_repo = rdd_repo_graph.map(lambda tup: tup[0])
+rdd_repo = rdd_neighbors.map(lambda tup: tup[0])
 rdd_repo.foreachPartition(write_flower_to_riak)
 
 def cache_top_K():
-    clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
-        for ip in cfg.RIAK_IPS]
+    clients = [RiakClient(host=ip, protocol='pbc', pb_port=RIAK_PORT)
+        for ip in RIAK_IPS]
     flowers = [client.bucket('%s/flowers' % LANGUAGE) \
         for client in clients]
     top_flowers = [client.bucket('%s/top_flowers' % LANGUAGE) \
         for client in clients]
-
-    for k, tup, flower, top_flower in zip(range(cfg.K),
+    for k, tup, flower, top_flower in zip(range(K),
                                           top_K_repos,
                                           cycle(flowers),
                                           cycle(top_flowers)):
         dst_repo = tup[0]
         top_flower.new('%d' % k, flower.get(dst_repo).data).store()
-
-    top_flowers[0].new('K', cfg.K).store()
+    top_flowers[0].new('K', K).store()
 
 cache_top_K()

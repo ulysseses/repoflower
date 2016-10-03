@@ -1,7 +1,7 @@
 '''
 spark-submit --master spark://172.31.1.231:7077 --driver-memory 13g \
     --executor-memory 13g --packages com.databricks:spark-avro_2.10:2.0.1 \
-    --py-files pyfiles.zip python_batch.py
+    python_batch.py
 '''
 from __future__ import print_function
 import re
@@ -12,7 +12,6 @@ from pyspark import SparkContext, SparkConf, StorageLevel
 from pyspark.sql import *
 from elasticsearch import Elasticsearch
 from riak import RiakClient
-from docopt import docopt
 import sys
 sys.path.insert(0, '../redis')
 from RedisConfig import RedisConfig
@@ -20,12 +19,18 @@ from RedisConfig import RedisConfig
 cfg = RedisConfig()
 
 LANGUAGE = "python"
+RIAK_IPS = cfg.RIAK_IPS.split(',')
+RIAK_PORT = int(cfg.RIAK_PORT)
+K = int(cfg.K)
+N = int(cfg.N)
+ES_IP = cfg.ES_IP
+ES_PORT = int(cfg.ES_PORT)
 
 ###############################################################################
 # Setup context
 ###############################################################################
 conf = SparkConf() \
-    .setMaster("spark://%s:%d" %
+    .setMaster("spark://%s:%s" %
         (cfg.SPARK_IP, cfg.SPARK_PORT)) \
     .setAppName(cfg.SPARK_APP_NAME)
 sc = SparkContext(conf=conf)
@@ -154,7 +159,7 @@ def match_repos(tups):
     """
     results = []
     # NOTE: timeout to 3600 seconds
-    es = Elasticsearch([{'host' : cfg.ES_IP, 'port': cfg.ES_PORT}],
+    es = Elasticsearch([{'host' : ES_IP, 'port': ES_PORT}],
         timeout=3600, filter_path=['hits.hits._*'])
     # TODO: refactor query's schema in case future index/query structure changes
     query = {
@@ -236,7 +241,7 @@ rdd_repo_graph = rdd_query_output.aggregateByKey([], seqOp3, combOp3) \
 tmp1.unpersist()
 rdd_repo_graph.persist(StorageLevel.DISK_ONLY)
 
-top_K_repos = rdd_repo_graph.top(cfg.K, key=lambda tup: tup[-1])
+top_K_repos = rdd_repo_graph.top(K, key=lambda tup: tup[-1])
 
 # Briefly visualize the top 10 repos
 for tup in islice(top_K_repos, 0, 10):
@@ -251,8 +256,8 @@ for tup in islice(top_K_repos, 0, 10):
 # Send the rest of the repo adjacency lists to Riak
 def write_neighbors_to_riak(tups):
     clients = [RiakClient(host=ip, protocol='pbc',
-                          pb_port=cfg.RIAK_PORT)
-               for ip in cfg.RIAK_IPS.split(',')]
+                          pb_port=RIAK_PORT)
+               for ip in RIAK_IPS]
     buckets = [client.bucket('%s/neighbors' % LANGUAGE)
         for client in clients]
     for tup, bucket in zip(tups, cycle(buckets)):
@@ -275,17 +280,15 @@ def write_flower_to_riak(repos):
     Riak does have a strong consistency mode, but at the moment it isn't ready
     for production.
     """
-    clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
-        for ip in cfg.RIAK_IPS.split(',')]
-    neighborss = [client.bucket('%s/neighbors' % LANGUAGE) \
+    clients = [RiakClient(host=ip, protocol='pbc', pb_port=RIAK_PORT)
+        for ip in RIAK_IPS]
+    neighbors = [client.bucket('%s/neighbors' % LANGUAGE) \
         for client in clients]
     flowers = [client.bucket('%s/flowers' % LANGUAGE) \
         for client in clients]
 
-    N = cfg.N
-
     for repo0, neighbor, flower in zip(repos,
-                                       cycle(neighborss),
+                                       cycle(neighbors),
                                        cycle(flowers)):
         repo_set = set()
         nodes = []
@@ -336,20 +339,20 @@ rdd_repo = rdd_repo_graph.map(lambda tup: tup[0])
 rdd_repo.foreachPartition(write_flower_to_riak)
 
 def cache_top_K():
-    clients = [RiakClient(host=ip, protocol='pbc', pb_port=cfg.RIAK_PORT)
-        for ip in cfg.RIAK_IPS.split(',')]
+    clients = [RiakClient(host=ip, protocol='pbc', pb_port=RIAK_PORT)
+        for ip in RIAK_IPS]
     flowers = [client.bucket('%s/flowers' % LANGUAGE) \
         for client in clients]
     top_flowers = [client.bucket('%s/top_flowers' % LANGUAGE) \
         for client in clients]
 
-    for k, tup, flower, top_flower in zip(range(cfg.K),
+    for k, tup, flower, top_flower in zip(range(K),
                                           top_K_repos,
                                           cycle(flowers),
                                           cycle(top_flowers)):
         dst_repo = tup[0]
         top_flower.new('%d' % k, flower.get(dst_repo).data).store()
 
-    top_flowers[0].new('K', cfg.K).store()
+    top_flowers[0].new('K', K).store()
 
 cache_top_K()
