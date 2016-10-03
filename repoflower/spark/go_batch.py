@@ -107,9 +107,10 @@ def helper(tup):
         prog3 = re.compile(r'.*\"(.*)\".*')
         e = [prog3.search(x) for x in d]
         f = [x.group(1) for x in e if x is not None]
-        f = ['/'.join(gh_dep[11:].split('/')[:2])
-             for gh_dep in f if dep[:11] == 'github.com/']
-        f = [x for x in f if x != '']
+        f = [gh_dep[11:] for gh_dep in f if gh_dep[:11] == 'github.com/']
+        f = [dep.split('/') for dep in f]
+        f = [splits[:2] for splits in f if len(splits) >= 2]
+        f = ['/'.join(splits) for splits in f]
     except:
         f = []
     deps = (_id, f)
