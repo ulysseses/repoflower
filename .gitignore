@@ -2,3 +2,4 @@ shared_config.py
 *.csv
 interactive.py
 *.txt
+*.pyc

@@ -1,9 +1,12 @@
 '''
 Reset the Elasticsearch cluster.
 '''
+import sys
+sys.path.insert(0, '../redis')
+from RedisConfig import RedisConfig
+
 from elasticsearch import Elasticsearch
 import json
-from ..redis import RedisConfig
 
 cfg = RedisConfig()
 
