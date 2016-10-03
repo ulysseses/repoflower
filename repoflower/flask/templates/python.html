@@ -103,7 +103,7 @@ function dragended(d) {
 }
 
 $(document).ready(function() {
-  $.get("/static/python_topK.json",
+  $.get("/static/python_top_K.json",
     function(data, status) {
       graph = data;
       refreshGraph();

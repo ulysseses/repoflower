@@ -1,6 +1,8 @@
 from flask import Flask, render_template, jsonify
 from riak import RiakClient
-from ..redis import RedisConfig
+import sys
+sys.path.insert(0, '../redis')
+from RedisConfig import RedisConfig
 
 cfg = RedisConfig()
 riak_ip = cfg.RIAK_IPS.split(',')[1]
@@ -18,7 +20,7 @@ def hello_go():
     return render_template('go.html')
 
 @app.route('/<lang>/<user>/<repo_name>')
-def get_python_flower(lang, user, repo_name):
+def get_flower(lang, user, repo_name):
     client = RiakClient(host=riak_ip, pb_port=riak_port, protocol="pbc")
     bucket = client.bucket("%s/flowers" % lang)
 

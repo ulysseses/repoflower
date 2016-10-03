@@ -103,7 +103,7 @@ function dragended(d) {
 }
 
 $(document).ready(function() {
-  $.get("/static/go_topK.json",
+  $.get("/static/go_top_K.json",
     function(data, status) {
       graph = data;
       refreshGraph();

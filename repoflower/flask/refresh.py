@@ -6,8 +6,10 @@ import heapq
 import json
 from riak import RiakClient
 from flask import Flask, jsonify
-from ..redis import RedisConfig
 from docopt import docopt
+import sys
+sys.path.insert(0, '../redis')
+from RedisConfig import RedisConfig
 
 arguments = docopt(__doc__)
 language = arguments['<language>']
@@ -44,7 +46,7 @@ nodes = [{"id": repo, "group": degree} for (repo, degree) in nodes]
 links = [{"source": src_repo, "target": dst_repo} for \
     (src_repo, dst_repo) in links]
 
-with open('static/%s_topK.json' % language, 'w') as f:
+with open('static/%s_top_K.json' % language, 'w') as f:
     app = Flask(__name__)
     with app.test_request_context():
         raw = jsonify({"nodes": nodes, "links": links}).data
