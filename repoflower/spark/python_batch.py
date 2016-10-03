@@ -1,9 +1,7 @@
 '''
 spark-submit --master spark://172.31.1.231:7077 --driver-memory 13g \
     --executor-memory 13g --packages com.databricks:spark-avro_2.10:2.0.1 \
-    --py-files pyfiles.zip spark_batch_job.py <language>
-
-Usage: spark_batch_job.py <language>
+    --py-files pyfiles.zip python_batch.py
 '''
 from __future__ import print_function
 import re
@@ -15,19 +13,13 @@ from pyspark.sql import *
 from elasticsearch import Elasticsearch
 from riak import RiakClient
 from docopt import docopt
-from ..redis import RedisConfig
+import sys
+sys.path.insert(0, '../redis')
+from RedisConfig import RedisConfig
 
 cfg = RedisConfig()
 
-ARGUMENTS = docopt(__doc__)
-LANGUAGE = ARGUMENTS['<language>'].lower()
-
-if LANGUAGE == 'python':
-	from . import extract_deps_python as extract_deps
-elif LANGUAGE == 'go':
-	from . import extract_deps_go as extract_deps
-else:
-	raise Exception("language isn't supported")
+LANGUAGE = "python"
 
 ###############################################################################
 # Setup context
@@ -61,8 +53,25 @@ df_files = sc_sql.read.format("com.databricks.spark.avro").load(
 df_files.registerTempTable("files")
 
 # Extract names of dependencies
+def extract_dependency(tup):
+    _id, line = tup
+    prog = re.compile("""^(?:import|from)[\t ]+([^\. ]+)""")
+    obj = prog.match(line)
+    if obj:
+        return (_id, obj.group(1))
+    return (_id, obj)
+
+rdd_contents = sc_sql.sql("""
+    SELECT id, SPLIT(content, '\\n') as lines
+    FROM contents
+    """) \
+    .flatMap(lambda row: \
+        [(row.id, line) for line in row.lines] if row.lines else []) \
+    .map(extract_dependency) \
+    .filter(lambda tup: True if tup[1] else False)
+
 # (id, dep)
-df_contents = extract_deps.extract_deps(sc_sql)
+df_contents = sc_sql.createDataFrame(rdd_contents, ['id', 'dep'])
 
 # (id, dep_repo, path)
 df_files = sc_sql.sql("""
@@ -189,8 +198,8 @@ def match_repos(tups):
             body_elems.append('{}')
             body_elems.append(json.dumps(query))
         body = '\n'.join(body_elems)
-        response_obj = es.msearch(body=body, index='github',
-            doc_type=LANGUAGE)
+        response_obj = es.msearch(body=body, index=['github'],
+            doc_type=[LANGUAGE])
         responses = response_obj['responses']
         for tup, response in zip(mb, responses):
             hits = response['hits']['hits']
@@ -244,11 +253,11 @@ def write_neighbors_to_riak(tups):
     clients = [RiakClient(host=ip, protocol='pbc',
                           pb_port=cfg.RIAK_PORT)
                for ip in cfg.RIAK_IPS.split(',')]
-    buckets = [riak_client.bucket('%s/neighbors' % LANGUAGE)
-        for riak_client in clients]
-    for tup, riak_bucket in zip(tups, cycle(buckets)):
+    buckets = [client.bucket('%s/neighbors' % LANGUAGE)
+        for client in clients]
+    for tup, bucket in zip(tups, cycle(buckets)):
         repo, adj_repos, _ = tup
-        _ = riak_bucket.new(repo, adj_repos).store()
+        _ = bucket.new(repo, adj_repos).store()
 
 rdd_repo_graph.foreachPartition(write_neighbors_to_riak)
 

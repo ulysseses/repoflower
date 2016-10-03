@@ -1,11 +1,13 @@
 '''
 Usage: index_es.py <language> <filename>
 '''
+import sys
+sys.path.insert(0, '../redis')
+from RedisConfig import RedisConfig
 from docopt import docopt
 from elasticsearch import Elasticsearch
 import csv
 from itertools import islice
-from ..redis import RedisConfig
 
 cfg = RedisConfig()
 

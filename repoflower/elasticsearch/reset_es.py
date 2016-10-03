@@ -32,14 +32,14 @@ config = {
         }
     },
     "mappings": {
-        "go": {
-            "properties": {
-                "repo_name": {
-                    "type": "string",
-                    "index": "not_analyzed"
-                }
-            }
-        },
+        # "go": {
+        #     "properties": {
+        #         "repo_name": {
+        #             "type": "string",
+        #             "index": "not_analyzed"
+        #         }
+        #     }
+        # },
         "python": {
             "properties": {
                 "repo_name": {
