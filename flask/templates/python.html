@@ -13,7 +13,12 @@
 }
 
 </style>
-<svg width="960" height="600"></svg>
+<!-- Latest compiled and minified CSS -->
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+<h1>Repo Flower</h1>
+<p>Order = 2. Radius = number of repos dependent on it. Line = dependency</p>
+<svg width="1200" height="800"></svg>
+<br>
 <input type="text" id="search-text" name="query-repo">
 <script src="https://d3js.org/d3.v4.min.js"></script>
 <script src="http://code.jquery.com/jquery-3.1.1.min.js"></script>
@@ -27,9 +32,14 @@ var svg = d3.select("svg"),
 
 var color = d3.scaleOrdinal(d3.schemeCategory20);
 
+// var simulation = d3.forceSimulation()
+//     .force("link", d3.forceLink().id(function(d) { return d.id; }))
+//     .force("charge", d3.forceManyBody().strength(-20))
+//     .force("center", d3.forceCenter(width / 2, height / 2));
 var simulation = d3.forceSimulation()
-    .force("link", d3.forceLink().id(function(d) { return d.id; }))
-    .force("charge", d3.forceManyBody())
+    .force("link", d3.forceLink().id(function(d) { return d.id; })
+      .distance(function(d) { return 80; }))
+    .force("charge", d3.forceManyBody().strength(function(d) { return -d.group / 100; }))
     .force("center", d3.forceCenter(width / 2, height / 2));
 
 function refreshGraph() {
@@ -53,7 +63,7 @@ function refreshGraph() {
   var node = _node
     .enter().append("circle")
       .attr("r", 5)
-      .attr("r", function(d) { return Math.log2(d.group + 1) + 10; })
+      .attr("r", function(d) { return 1.5*Math.log2(d.group + 2) + 5; })
       .attr("fill", function(d) { return color(d.group); })
       .call(d3.drag()
           .on("start", dragstarted)
