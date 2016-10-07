@@ -36,15 +36,18 @@ For reference, here are the schema of the tables I've used:
 
 **contents**
 
-| id | size | content | binary | copies |
+| id  | size | content | binary | copies |
+| --- | ---- | ------- | ------ | ------ |
 
 **files**
 
-| repo_name | ref | path | mode | id | symlink_target |
+| repo_name | ref | path | mode | id  | symlink_target |
+| --------- | --- | ---- | ---- | --- | -------------- |
 
 **repos**
 
 | user | repo_name | num_bytes |
+| ---- | --------- | --------- |
 
 The data is then transferred from BigQuery into Google Cloud storage buckets via the [Avro](https://avro.apache.org/) serialization format. From there, the data is transferred again into S3 because we, the Insight Data Engineering Fellows, were are the AWS infrastructure.
 
@@ -52,7 +55,7 @@ Finally, the Avro files are streamed into Spark for batch processing. Serializat
 
 ## Pipeline
 
-![pipeline](github/pipeine.png)
+![pipeline](github/pipeline.png)
 
 Since the data is divided across 3 tables, work must be done in joining and aggregating them. The content and file data resided on Spark, while Elasticsearch served as a look-up-table for the GitHub repository names. Spark extracts the dependency information from the import statements of the Python/Go source files via Regex. It ignores dependencies that:
 
@@ -67,3 +70,60 @@ This information is aggregated/shuffled to build a graph in adjacency-list forma
 ## Video
 
 [![Recorded Demo](github/video_image.png)](https://youtu.be/O7CMFPxRA70)
+
+## Instructions
+
+Have Redis, Elasticsearch, Riak, and Spark running in the background.
+
+_Note: Redis is also used for accessing common configuration parameters from any server in the cluster. Make sure to restrict Redis access to only within the private network._
+
+Make sure to have the following Python dependencies installed:
+
+```bash
+# Elasticsearch
+sudo pip install elasticsearch
+# Redis
+sudo pip install redis
+# Riak
+sudo apt-get install python-dev libffi-dev libssl-dev
+sudo pip install riak
+
+```
+
+Then perform the following commands on the respective instances:
+
+```bash
+# Assuming you are in the root directory of the Repoflower project...
+
+# Copy shared_config.py.template into shared_config.py
+cp redis/shared_config.py.template \
+	redis/shared_config.py
+
+# Assuming you have filled out shared_config.py with the relevant parameters...
+python redis/shared_config.py
+
+# Reset & index Elasticsearch with repo names
+python elasticsearch/reset_es.py
+python elasticsearch/index_es.py python python_repos.csv
+python elasticsearch/index_es.py go go_repos.csv
+
+# Clear up Riak (optional)
+python riak/reset_riak.py
+
+# Run the Spark batch job
+spark-submit --driver-memory 13g --executor-memory 13g \
+	--packages com.databricks:spark-avro_2.10:2.0.1 \
+	spark/python_batch.py
+
+spark-submit --driver-memory 13g --executor-memory 13g \
+	--packages com.databricks:spark-avro_2.10:2.0.1 \
+	spark/go_batch.py
+
+# After the batch job is done, tell Flask to be aware of the new data
+python flask/refresh.py
+
+# Run the Flask webserver, if you haven't already
+sudo python flask/app.py
+
+# Navigate to http://repoflower.top and see the results
+```
