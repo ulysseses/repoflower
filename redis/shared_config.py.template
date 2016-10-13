@@ -1,4 +1,4 @@
-from . import RedisConfig
+from RedisConfig import RedisConfig
 
 cfg = RedisConfig()
 

@@ -51,3 +51,20 @@ with open('static/%s_top_K.json' % language, 'w') as f:
     with app.test_request_context():
         raw = jsonify({"nodes": nodes, "links": links}).data
         f.write(raw)
+
+
+del nodes, links
+
+bucket = client.bucket('%s/top_cooccurs' % language)
+output = []
+for b in range(int(bucket.get('B').data)):
+#for b in range(int(cfg.B)):
+    data = bucket.get('%d' % b).data
+    dep1, dep2, count = data
+    output.append("%s: %s, %s" % (count, dep1, dep2))
+
+with open('static/%s_top_B.json' % language, 'w') as f:
+    app = Flask(__name__)
+    with app.test_request_context():
+        raw = jsonify({"cooccurs": output}).data
+        f.write(raw)

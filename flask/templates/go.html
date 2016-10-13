@@ -143,7 +143,7 @@ $("#search-text").keyup(function (e) {
       var user = tmp[0];
       var repo_name = tmp[1];
       if (user != "" && repo_name != "") {
-        $.get(encodeURI("/go/" + user + "/" + repo_name),
+        $.get(encodeURI("/flowers/go/" + user + "/" + repo_name),
           function(data, status) {
             if (status == "success") {
               graph = data;

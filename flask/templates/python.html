@@ -24,19 +24,33 @@
 <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
 </head>
 <body>
-  <center><h1 class="hello">Repo Flower</h1>
+  <center>
+  <h1 class="hello">Repo Flower</h1>
   <p>The top K=8 of the most depended-on (i.e. popular) repos are chosen. Then, for each of these repos, only N=8 of the repo's dependees are shown, ranked by how many other repos depend on it (popularity). Then, for each of <i>these</i> repos, find its top N=8 most popular repos.</p>
   <p><a href="/go">Click here to visualize go repos</a></p>
   <br>
-  <input type="text" id="search-text" name="query-repo" placeholder="user/repo">
+  <input type="text" id="search-flowers" name="query-repo" placeholder="user/repo">
   <br><br>
   <svg width="1200" height="800"></svg>
+  <br>
+  <br>
+  <p>Dependency co-occurrence count</p>
+  <input type="text" id="search-cooccurs" name="query-dep" placeholder="dependency">
+  <br>
+  <br>
+  <ul id="cooccurs_list">
+  </ul>
+  <br>
+  <br>
   <p>Victor Chen <a href="https://www.linkedin.com/in/victor-lam-chen">LinkedIn</a> <a href="http://github.com/ulysseses/repoflower">GitHub Repo</a> <a href="http://bit.ly/2cTDZxh">Presentation Slides</a></p>
   </center>
 </body>
 <script src="https://d3js.org/d3.v4.min.js"></script>
 <script src="http://code.jquery.com/jquery-3.1.1.min.js"></script>
 <script>
+
+var $list = $("#cooccurs_list");
+
 
 var graph;
 
@@ -132,18 +146,30 @@ $(document).ready(function() {
       graph = data;
       refreshGraph();
     }
-  )
+  );
+  
+  $.get("/static/python_top_B.json",
+    function(data, status) {
+      $list.empty();
+      var cooccurs = data.cooccurs;
+      cooccurs.forEach(function(s) {
+        $('<li>')
+          .text(s)
+          .appendTo($list);
+      })
+    }
+  );
 });
 
-$("#search-text").keyup(function (e) {
-    if (e.keyCode == 13) {
-    var query_repo = $('#search-text').val();
+$("#search-flower").keyup(function (e) {
+  if (e.keyCode == 13) {
+    var query_repo = $('#search-flower').val();
     var tmp = query_repo.split("/");
     if (tmp.length == 2) {
       var user = tmp[0];
       var repo_name = tmp[1];
       if (user != "" && repo_name != "") {
-        $.get(encodeURI("/python/" + user + "/" + repo_name),
+        $.get(encodeURI("/flowers/python/" + user + "/" + repo_name),
           function(data, status) {
             if (status == "success") {
               graph = data;
@@ -153,6 +179,32 @@ $("#search-text").keyup(function (e) {
         )
       }
     }
+  }
+});
+
+$("#search-cooccurs").keyup(function (e) {
+  if (e.keyCode == 13) {
+    $list.empty();
+    // var names = ["a", "b", "c"]
+    // names.forEach(function (name) {
+    //   $('<li>')
+    //     .text(name)
+    //     .appendTo($list);
+    // })
+    
+    var query_dep = $('#search-cooccurs').val();
+    $.get(encodeURI("/cooccurs/python/" + query_dep),
+      function(data, status) {
+        if (status == "success") {
+          var cooccurs = data.cooccurs;
+          cooccurs.forEach(function(dep_count) {
+            $("<li>")
+              .text(dep_count[1] + ": " + query_dep + ", " + dep_count[0])
+              .appendTo($list);
+          })
+        }
+      }
+    )
   }
 });
 
