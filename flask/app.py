@@ -19,7 +19,7 @@ def hello_python():
 def hello_go():
     return render_template('go.html')
 
-@app.route('/<lang>/<user>/<repo_name>')
+@app.route('/flowers/<lang>/<user>/<repo_name>')
 def get_flower(lang, user, repo_name):
     client = RiakClient(host=riak_ip, pb_port=riak_port, protocol="pbc")
     bucket = client.bucket("%s/flowers" % lang)
@@ -37,6 +37,13 @@ def get_flower(lang, user, repo_name):
     del _links
 
     return jsonify({"nodes": nodes, "links": links})
+
+@app.route('/cooccurs/<lang>/<dep>')
+def get_cooccurs(lang, dep):
+    client = RiakClient(host=riak_ip, pb_port=riak_port, protocol='pbc')
+    bucket = client.bucket('%s/cooccurs' % lang)
+    return jsonify({"cooccurs": bucket.get(dep).data})
+    
 
 
 if __name__ == '__main__':

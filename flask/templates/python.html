@@ -26,7 +26,7 @@
 <body>
   <center>
   <h1 class="hello">Repo Flower</h1>
-  <p>The top K=8 of the most depended-on (i.e. popular) repos are chosen. Then, for each of these repos, only N=8 of the repo's dependees are shown, ranked by how many other repos depend on it (popularity). Then, for each of <i>these</i> repos, find its top N=8 most popular repos.</p>
+  <p>The top K=5 of the most depended-on (i.e. popular) repos are chosen. Then, for each of these repos, only N=8 of the repo's dependees are shown, ranked by how many other repos depend on it (popularity). Then, for each of <i>these</i> repos, find its top N=5 most popular repos.</p>
   <p><a href="/go">Click here to visualize go repos</a></p>
   <br>
   <input type="text" id="search-flowers" name="query-repo" placeholder="user/repo">
@@ -34,7 +34,7 @@
   <svg width="1200" height="800"></svg>
   <br>
   <br>
-  <p>Dependency co-occurrence count</p>
+  <p>Top 20 dependency co-occurrence count</p>
   <input type="text" id="search-cooccurs" name="query-dep" placeholder="dependency">
   <br>
   <br>
@@ -161,9 +161,9 @@ $(document).ready(function() {
   );
 });
 
-$("#search-flower").keyup(function (e) {
+$("#search-flowers").keyup(function (e) {
   if (e.keyCode == 13) {
-    var query_repo = $('#search-flower').val();
+    var query_repo = $('#search-flowers').val();
     var tmp = query_repo.split("/");
     if (tmp.length == 2) {
       var user = tmp[0];
