@@ -573,7 +573,7 @@ def keep_top_cooccurs(B):
     return lambda tups: _keep_top_cooccurs(tups, B)
 
 # For each partition, keep the top B co-occurring dependencies
-rdd_top_cooccurs = rdd_cooccurs2.mapPartitions(keep_top_cooccurs(B))
+rdd_local_top_cooccurs = rdd_cooccurs2.mapPartitions(keep_top_cooccurs(B))
 
 # Then collect and merge sort to keep top B
 # (too lazy to implement partial sort via quickselect)
