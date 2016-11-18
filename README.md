@@ -9,6 +9,14 @@ _See how GitHub Repos depend on one another_
 
 Repoflower was my project for [Insight Data Engineering](http://insightdataengineering.com/), Fall 2016 Session C.
 
+## Demo
+
+[![Recorded Demo](github/video_image.png)](https://youtu.be/YgZsOySGCDE)
+
+## Slides
+
+[Google Slides for the demo](http://bit.ly/2cTDZxh).
+
 ## Intro
 
 How many repositories depend on my repository? **Repoflower** can answer that! It is a data pipeline that analyzes (Python & Go) source files found on GitHub repositories (repos) to then discover how individual repos import/depend on other repos. It makes use of the following technologies:
@@ -70,13 +78,7 @@ Spark takes care of step 1 through aggregation, while steps 2 and 3 are handled 
 
 This information is aggregated/shuffled to build a graph in adjacency-list format, which is ultimately stored on Riak. Flask/D3.js will pull from Riak to visualize repo-to-repo connections. Since each repo can potentially have tens of thousands of repos that are dependent on it (e.g. `numpy/numpy`), for visualization purposes, I limit the max distance from the queried repo to 2 and node [degree](https://en.wikipedia.org/wiki/Degree_(graph_theory)) to 8. These parameters can be changed to ones liking.
 
-## Demo
-
-[![Recorded Demo](github/video_image.png)](https://youtu.be/O7CMFPxRA70)
-
-## Slides
-
-[Google Slides for the demo](http://bit.ly/2cTDZxh).
+There is also another batch job that finds the co-occurrences between each and every dependency found in all the source files. Please refer to the demo to see it in action.
 
 ## Instructions
 
